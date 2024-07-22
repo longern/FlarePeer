@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script>
+      /** @param {RTCPeerConnection} peerConnection */
+      function waitICEGathering(peerConnection) {
+        return new Promise((resolve) => {
+          /** Wait at most 200ms for ICE gathering. */
+          setTimeout(function () {
+            resolve(peerConnection.localDescription);
+          }, 200);
+          peerConnection.onicegatheringstatechange = (_ev) =>
+            peerConnection.iceGatheringState === "complete" &&
+            resolve(peerConnection.localDescription);
+        });
+      }
+
+      (function () {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(protocol + "//" + location.host);
+        const connections = {};
+
+        ws.onopen = async function () {
+          ws.onmessage = async function (event) {
+            const data = JSON.parse(event.data);
+            switch (data.type) {
+              case "open": {
+                const { id, token } = data;
+                document.getElementById("my-peer-id").textContent = id;
+                console.log("Token for reconnection is", token);
+                break;
+              }
+              case "offer": {
+                const { source, content } = data;
+                const connection = new RTCPeerConnection();
+                await connection.setRemoteDescription({
+                  type: "offer",
+                  sdp: content,
+                });
+                const answer = await connection.createAnswer();
+                await connection.setLocalDescription(answer);
+                const { sdp } = await waitICEGathering(connection);
+                connections[source] = connection;
+                ws.send(
+                  JSON.stringify({ type: "answer", id: source, content: sdp })
+                );
+                break;
+              }
+              case "answer": {
+                const { source, content } = data;
+                const connection = connections[source];
+                if (!connection) return;
+                await connection.setRemoteDescription({
+                  type: "answer",
+                  sdp: content,
+                });
+                break;
+              }
+              case "error":
+                console.error(data.message);
+                break;
+            }
+          };
+
+          ws.send(JSON.stringify({ type: "open" }));
+          const interval = setInterval(() => {
+            ws.send(JSON.stringify({ type: "poll" }));
+          }, 5000);
+          ws.onclose = () => clearInterval(interval);
+
+          async function guest(peerId) {
+            connections[peerId] = new RTCPeerConnection();
+            connections[peerId].createDataChannel("channel");
+            const offer = await connections[peerId].createOffer();
+            await connections[peerId].setLocalDescription(offer);
+            const { sdp } = await waitICEGathering(connections[peerId]);
+            ws.send(
+              JSON.stringify({
+                type: "offer",
+                id: peerId,
+                content: sdp,
+              })
+            );
+          }
+
+          window.guest = guest;
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="my-peer-id"></div>
+    <input type="text" id="peer-id" placeholder="Peer ID" />
+    <button onclick="guest( document.getElementById('peer-id').value )">
+      Connect
+    </button>
+  </body>
+</html>
