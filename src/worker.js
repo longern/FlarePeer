@@ -44,7 +44,7 @@ async function verifyToken(secretKey, peerId, token) {
 
 async function onSocketOpen(server, env) {
   let peerId = null;
-  let lastPoll = new Date(0);
+  let lastPoll = 0;
 
   if (!env.DB) {
     server.send(JSON.stringify({ type: "error", message: "DB not set" }));
@@ -133,8 +133,9 @@ async function onSocketOpen(server, env) {
         case "poll": {
           if (!peerId) throw new Error("Bad Request");
           const pollInterval = env.PEER_POLL_INTERVAL ?? 4500;
-          if (lastPoll.getTime() + pollInterval > Date.now())
+          if (lastPoll + pollInterval > Date.now())
             throw new Error("Too Many Requests");
+          lastPoll = Date.now();
           const consumeMessageStmt = await getFromCache("consume-message", () =>
             env.DB.prepare(
               "DELETE FROM flare_peer_messages WHERE destination = ?1 RETURNING source, type, content"
