@@ -117,9 +117,15 @@ async function onSocketOpen(server, env) {
         case "offer":
         case "answer":
         case "ice-candidate": {
-          if (!peerId || typeof data.id !== "string" || peerId === data.id)
+          if (
+            !peerId ||
+            typeof data.id !== "string" ||
+            peerId === data.id ||
+            typeof data.content !== "string"
+          )
             throw new Error("Bad Request");
           if (await peerIdNotExists(data.id)) throw new Error("Not Found");
+          if (data.content.length > 32767) throw new Error("Content Too Large");
           const insertMessageStmt = await getFromCache("insert-message", () =>
             env.DB.prepare(
               "INSERT INTO flare_peer_messages (source, destination, type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)"
