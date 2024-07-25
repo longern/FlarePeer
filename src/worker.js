@@ -42,129 +42,140 @@ async function verifyToken(secretKey, peerId, token) {
   return crypto.subtle.verify("HMAC", key, encodedToken, encodedPeerId);
 }
 
-async function onSocketOpen(server, env) {
+async function peerIdNotExists(db, peerId) {
+  const checkPeerStmt = await getFromCache("check-peer", () =>
+    db.prepare("SELECT id FROM flare_peer_peers WHERE id = ?1 LIMIT 1")
+  );
+  const checkResult = await checkPeerStmt.bind(peerId).first("id");
+  return checkResult === null;
+}
+
+async function createPeerId(db) {
   let peerId = null;
-  let lastPoll = 0;
-
-  if (!env.DB) {
-    server.send(JSON.stringify({ type: "error", message: "DB not set" }));
-    server.close();
+  for (let retries = 0; retries < 5; retries++) {
+    peerId = crypto.randomUUID();
+    if (await peerIdNotExists(db, peerId)) break;
   }
+  const insertPeerStmt = await getFromCache("insert-peer", () =>
+    db.prepare("INSERT INTO flare_peer_peers (id, created_at) VALUES (?1, ?2)")
+  );
+  await insertPeerStmt.bind(peerId, Date.now()).run();
+  return peerId;
+}
 
-  async function peerIdNotExists(peerId) {
-    const checkPeerStmt = await getFromCache("check-peer", () =>
-      env.DB.prepare("SELECT id FROM flare_peer_peers WHERE id = ?1 LIMIT 1")
+const PEER_METHODS = {
+  async open(params, context) {
+    const { env, server, data } = context;
+    if (data.peerId) throw new Error("Precondition Failed");
+    if (env.PEER_API_KEY && params?.key !== env.PEER_API_KEY) server.close();
+    const newPeerId = await createPeerId(env.DB);
+    data.peerId = newPeerId;
+    const token = await generateToken(env.SECRET_KEY, newPeerId);
+    return { id: newPeerId, token };
+  },
+
+  async reconnect(params, context) {
+    const { env, data } = context;
+    if (data.peerId) throw new Error("Precondition Failed");
+    if (typeof params.id !== "string") throw new Error("Bad Request");
+    const verifyResult =
+      typeof params.token === "string"
+        ? await verifyToken(env.SECRET_KEY, params.id, params.token)
+        : false;
+    if (!verifyResult) throw new Error("Unauthorized");
+    if (await peerIdNotExists(env.DB, params.id)) throw new Error("Not Found");
+    data.peerId = params.id;
+  },
+
+  async destroy(_, context) {
+    const { env, data } = context;
+    if (!data.peerId) throw new Error("Precondition Failed");
+    const deleteTopicStmt = env.DB.prepare(
+      "DELETE FROM flare_peer_peers WHERE id = ?1"
     );
-    const checkResult = await checkPeerStmt.bind(peerId).first("id");
-    return checkResult === null;
-  }
+    const deleteMessagesStmt = env.DB.prepare(
+      "DELETE FROM flare_peer_messages WHERE source = ?1 OR destination = ?1"
+    );
+    await deleteTopicStmt.bind(data.peerId).run();
+    await deleteMessagesStmt.bind(data.peerId).run();
+    data.peerId = null;
+  },
 
-  async function createPeerId() {
-    let peerId = null;
-    for (let retries = 0; retries < 5; retries++) {
-      peerId = crypto.randomUUID();
-      if (await peerIdNotExists(peerId)) break;
-    }
-    const insertPeerStmt = await getFromCache("insert-peer", () =>
+  async send(params, context) {
+    const { env, data } = context;
+
+    if (!data.peerId) throw new Error("Precondition Failed");
+    if (typeof params.id !== "string" || typeof params.content !== "string")
+      throw new Error("Bad Request");
+    if (data.peerId === params.id) throw new Error("Forbidden");
+    if (await peerIdNotExists(env.DB, params.id)) throw new Error("Not Found");
+    if (params.content.length > 32767) throw new Error("Content Too Large");
+
+    const insertMessageStmt = await getFromCache("insert-message", () =>
       env.DB.prepare(
-        "INSERT INTO flare_peer_peers (id, created_at) VALUES (?1, ?2)"
+        "INSERT INTO flare_peer_messages (source, destination, type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)"
       )
     );
-    await insertPeerStmt.bind(peerId, Date.now()).run();
-    return peerId;
-  }
+    await insertMessageStmt
+      .bind(data.peerId, params.id, params.type, params.content, Date.now())
+      .run();
+  },
 
-  const secretKey = env.SECRET_KEY;
+  async poll(_, context) {
+    const { env, data } = context;
+
+    if (!data.peerId) throw new Error("Precondition Failed");
+
+    const pollInterval = env.PEER_POLL_INTERVAL ?? 4500;
+    if (data.lastPoll + pollInterval > Date.now())
+      throw new Error("Too Many Requests");
+    data.lastPoll = Date.now();
+
+    const consumeMessageStmt = await getFromCache("consume-message", () =>
+      env.DB.prepare(
+        "DELETE FROM flare_peer_messages WHERE destination = ?1 RETURNING source, type, content"
+      )
+    );
+    const queryResult = await consumeMessageStmt.bind(data.peerId).all();
+    return queryResult.results;
+  },
+};
+
+async function onSocketOpen({ server, env }) {
+  const localData = { peerId: null, lastPoll: 0 };
+
+  setTimeout(() => {
+    if (!localData.peerId) server.close();
+  }, 10000);
+
   server.addEventListener("message", async (event) => {
     try {
-      if (typeof event.data !== "string") return;
+      if (typeof event.data !== "string") throw new Error("Bad Request");
       const data = JSON.parse(event.data);
-      switch (data.type) {
-        case "open": {
-          if (peerId) throw new Error("Bad Request");
-          if (env.PEER_API_KEY && data.key !== env.PEER_API_KEY) server.close();
-          peerId = await createPeerId();
-          const token = await generateToken(secretKey, peerId);
-          server.send(JSON.stringify({ type: "open", id: peerId, token }));
-          break;
-        }
-        case "reconnect": {
-          if (peerId || typeof data.id !== "string")
-            throw new Error("Bad Request");
-          const verifyResult =
-            typeof data.token === "string"
-              ? await verifyToken(secretKey, data.id, data.token)
-              : false;
-          if (!verifyResult) throw new Error("Unauthorized");
-          if (await peerIdNotExists(data.id)) throw new Error("Not Found");
-          peerId = data.id;
-          server.send(JSON.stringify({ type: "reconnect" }));
-          break;
-        }
-        case "destroy": {
-          if (!peerId) throw new Error("Bad Request");
-          const deleteTopicStmt = env.DB.prepare(
-            "DELETE FROM flare_peer_peers WHERE id = ?1"
+      if (!(data.method in PEER_METHODS)) throw new Error("Bad Request");
+      const context = { env, server, data: localData };
+      PEER_METHODS[data.method](data.params, context)
+        .then((result) => {
+          if (!data.id) return;
+          server.send(JSON.stringify({ result: result ?? null, id: data.id }));
+        })
+        .catch((e) => {
+          server.send(
+            JSON.stringify({ error: { message: e.message }, id: data.id })
           );
-          const deleteMessagesStmt = env.DB.prepare(
-            "DELETE FROM flare_peer_messages WHERE source = ?1 OR destination = ?1"
-          );
-          await deleteTopicStmt.bind(peerId).run();
-          await deleteMessagesStmt.bind(peerId).run();
-          server.send(JSON.stringify({ type: "destroy" }));
-          break;
-        }
-        case "offer":
-        case "answer":
-        case "ice-candidate": {
-          if (
-            !peerId ||
-            typeof data.id !== "string" ||
-            peerId === data.id ||
-            typeof data.content !== "string"
-          )
-            throw new Error("Bad Request");
-          if (await peerIdNotExists(data.id)) throw new Error("Not Found");
-          if (data.content.length > 32767) throw new Error("Content Too Large");
-          const insertMessageStmt = await getFromCache("insert-message", () =>
-            env.DB.prepare(
-              "INSERT INTO flare_peer_messages (source, destination, type, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)"
-            )
-          );
-          await insertMessageStmt
-            .bind(peerId, data.id, data.type, data.content, Date.now())
-            .run();
-          break;
-        }
-        case "poll": {
-          if (!peerId) throw new Error("Bad Request");
-          const pollInterval = env.PEER_POLL_INTERVAL ?? 4500;
-          if (lastPoll + pollInterval > Date.now())
-            throw new Error("Too Many Requests");
-          lastPoll = Date.now();
-          const consumeMessageStmt = await getFromCache("consume-message", () =>
-            env.DB.prepare(
-              "DELETE FROM flare_peer_messages WHERE destination = ?1 RETURNING source, type, content"
-            )
-          );
-          const queryResult = await consumeMessageStmt.bind(peerId).all();
-          for (const row of queryResult.results) {
-            const { type, source, content } = row;
-            server.send(JSON.stringify({ type, source, content }));
-          }
-          break;
-        }
-      }
+        });
     } catch (e) {
-      server.send(JSON.stringify({ type: "error", message: e.message }));
+      server.send(JSON.stringify({ error: { message: e.message } }));
     }
   });
 }
 
 export default {
   async fetch(request, env) {
-    const secretKey = env.SECRET_KEY;
-    if (!secretKey) return new Response("SECRET_KEY not set", { status: 500 });
+    if (!env.SECRET_KEY)
+      return new Response("SECRET_KEY not set", { status: 500 });
+
+    if (!env.DB) return new Response("DB not set", { status: 500 });
 
     const upgradeHeader = request.headers.get("Upgrade");
 
@@ -172,9 +183,8 @@ export default {
       return new Response("Upgrade Required", { status: 426 });
 
     const { 0: client, 1: server } = new WebSocketPair();
-
     server.accept();
-    onSocketOpen(server, env);
+    onSocketOpen({ server, env });
 
     return new Response(null, {
       status: 101,
