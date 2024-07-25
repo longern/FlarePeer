@@ -1,12 +1,12 @@
-## Introduction
+# FlarePeer
 
-A simple signaling server for WebRTC using Cloudflare Workers and D1.
+Free serverless signalling for WebRTC using Cloudflare Workers and D1.
 
-## Usage
+## Usage & Example
 
 ### Protocol
 
-Use [JSON-RPC 2.0](https://www.jsonrpc.org/specification) without `jsonrpc` field over WebSockets to communicate with the server.
+Use [JSON-RPC 2.0](https://www.jsonrpc.org/specification) without `jsonrpc` field over WebSocket.
 
 Example request:
 
@@ -22,7 +22,7 @@ Example response:
 
 ```json
 {
-  "result": { "id": "xxxx-xxx", "token": "TOKEN" },
+  "result": { "id": "xxxx-xxxx", "token": "TOKEN" },
   "id": 1
 }
 ```
@@ -32,13 +32,17 @@ Example response:
 ```typescript
 interface FlarePeerApi {
   open(params?: { key?: string }): Promise<{ id: string; token: string }>;
+
   reconnect(params: { id: string; token: string }): Promise<void>;
+
   destroy(): Promise<void>;
+
   send(params: {
     type: "offer" | "answer" | "ice-candidate";
     id: string;
     content: string;
   }): Promise<void>;
+
   poll(): Promise<{
     type: "offer" | "answer" | "ice-candidate";
     source: string;
@@ -47,22 +51,21 @@ interface FlarePeerApi {
 }
 ```
 
-### Example
+See `index.html` for a complete example.
 
-See `index.html`.
+### Demo server
 
-### Environment Variables
+A demo server is available at `wss://peer.longern.com`.
+However, it is recommended to host your own server to ensure privacy and reliability.
+
+### Host your own server
+
+Create a new D1 database and run SQL queries in `src/db.sql`.
+
+Create a new Workers project and copy `src/worker.js` to the editor.
+Set the following environment variables and deploy.
 
 - `DB`: (Required) D1 database binding.
 - `SECRET_KEY`: (Required) A random secret key.
 - `PEER_API_KEY`: If set, clients must provide this key to connect.
 - `PEER_POLL_INTERVAL`: The minimum interval (ms) between polling. Default is 4500.
-
-### Demo server
-
-A demo server is available at `wss://peer.longern.com`.
-
-### Host your own server
-
-Create a new Workers project and copy `src/worker.js` to the editor.
-Set the environment variables and deploy.
