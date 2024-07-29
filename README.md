@@ -32,7 +32,7 @@ Example response:
 ### Methods
 
 ```typescript
-interface FlarePeerApi {
+interface FlarePeerClient {
   open(params?: { key?: string }): Promise<{ id: string; token: string }>;
 
   reconnect(params: { id: string; token: string }): Promise<void>;
@@ -45,15 +45,17 @@ interface FlarePeerApi {
     content: string;
   }): Promise<void>;
 
-  poll(): Promise<{
-    type: "offer" | "answer" | "ice-candidate";
-    source: string;
-    content: string;
-  }>;
+  poll(): Promise<
+    Array<{
+      type: "offer" | "answer" | "ice-candidate";
+      source: string;
+      content: string;
+    }>
+  >;
 }
 ```
 
-See `index.html` for a complete example.
+See `example/main.js` for a complete example.
 
 ### Demo server
 

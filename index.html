@@ -1,103 +1,95 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <script>
-      /** @param {RTCPeerConnection} peerConnection */
-      function waitICEGathering(peerConnection) {
-        return new Promise((resolve) => {
-          /** Wait at most 200ms for ICE gathering. */
-          setTimeout(function () {
-            resolve(peerConnection.localDescription);
-          }, 200);
-          peerConnection.onicegatheringstatechange = (_ev) =>
-            peerConnection.iceGatheringState === "complete" &&
-            resolve(peerConnection.localDescription);
-        });
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script type="text/javascript" src="./example/main.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
       }
-
-      (function () {
-        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(protocol + "//" + location.host);
-        const connections = {};
-        const remoteCalls = {};
-
-        async function remoteCall(method, params = undefined) {
-          return new Promise((resolve, reject) => {
-            const id = Math.random().toString(36).slice(2);
-            remoteCalls[id] = { resolve, reject };
-            ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
-          });
-        }
-
-        ws.onopen = async function () {
-          ws.onmessage = async function (event) {
-            const data = JSON.parse(event.data);
-            if (data.id) {
-              if (remoteCalls[data.id]) {
-                if (data.error) remoteCalls[data.id].reject(data.error.message);
-                else remoteCalls[data.id].resolve(data.result);
-                delete remoteCalls[data.id];
-              }
-              return;
-            }
-            if (data.error) console.error(data.error.message);
-          };
-
-          const { id, token } = await remoteCall("open");
-          document.getElementById("my-peer-id").textContent = id;
-          console.log("Token for reconnection is", token);
-          const interval = setInterval(async () => {
-            const messages = await remoteCall("poll");
-            for (const message of messages) {
-              const { type, source, content } = message;
-              switch (type) {
-                case "offer": {
-                  const connection = new RTCPeerConnection();
-                  await connection.setRemoteDescription({
-                    type: "offer",
-                    sdp: content,
-                  });
-                  const answer = await connection.createAnswer();
-                  await connection.setLocalDescription(answer);
-                  const { sdp } = await waitICEGathering(connection);
-                  connections[source] = connection;
-                  const params = { type: "answer", id: source, content: sdp };
-                  remoteCall("send", params);
-                  break;
-                }
-                case "answer": {
-                  const connection = connections[source];
-                  if (!connection) return;
-                  await connection.setRemoteDescription({
-                    type: "answer",
-                    sdp: content,
-                  });
-                  break;
-                }
-              }
-            }
-          }, 5000);
-          ws.onclose = () => clearInterval(interval);
-
-          async function guest(peerId) {
-            connections[peerId] = new RTCPeerConnection();
-            connections[peerId].createDataChannel("channel");
-            const offer = await connections[peerId].createOffer();
-            await connections[peerId].setLocalDescription(offer);
-            const { sdp } = await waitICEGathering(connections[peerId]);
-            remoteCall("send", { type: "offer", id: peerId, content: sdp });
-          }
-
-          window.guest = guest;
-        };
-      })();
-    </script>
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        font-size: 14px;
+        margin: 0;
+        background-color: whitesmoke;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      main {
+        padding: 24px;
+        border-radius: 8px;
+        background-color: white;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.5em;
+      }
+      #my-peer-id {
+        font-family: monospace;
+      }
+      #peer-id {
+        font-family: monospace;
+      }
+      input {
+        padding: 8px;
+      }
+      button {
+        padding: 8px;
+        border: none;
+        border-radius: 4px;
+        background-color: transparent;
+        color: #1976d2;
+        transition: background-color 0.3s;
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: rgba(25, 118, 210, 0.04);
+      }
+      button:active {
+        background-color: rgba(25, 118, 210, 0.12);
+      }
+    </style>
   </head>
   <body>
-    <div id="my-peer-id"></div>
-    <input type="text" id="peer-id" placeholder="Peer ID" />
-    <button onclick="guest( document.getElementById('peer-id').value )">
-      Connect
-    </button>
+    <main>
+      <h1>FlarePeer Example</h1>
+      <div>
+        <div>
+          <button
+            style="margin-left: -8px"
+            onclick="javascript:navigator.clipboard.writeText( document.getElementById('my-peer-id').innerText )"
+          >
+            Copy your peer ID
+          </button>
+        </div>
+        <span id="my-peer-id"></span>
+      </div>
+      <div>
+        <div>Or input peer ID to connect:</div>
+        <div style="margin-top: 8px; display: flex; gap: 8px">
+          <input
+            type="text"
+            id="peer-id"
+            placeholder="Peer ID"
+            style="width: 100%"
+          />
+          <button onclick="guest( document.getElementById('peer-id').value )">
+            Connect
+          </button>
+        </div>
+      </div>
+      <div>
+        <span style="margin-right: 8px">Connection state:</span>
+        <span id="connection-state"></span>
+      </div>
+    </main>
   </body>
 </html>
