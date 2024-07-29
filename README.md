@@ -6,12 +6,13 @@ Free serverless signalling for WebRTC using Cloudflare Workers and D1.
 
 ### Protocol
 
-Use [JSON-RPC 2.0](https://www.jsonrpc.org/specification) without `jsonrpc` field over WebSocket.
+Use [JSON-RPC 2.0](https://www.jsonrpc.org/specification) over WebSocket.
 
 Example request:
 
 ```json
 {
+  "jsonrpc": "2.0",
   "method": "open",
   "params": { "key": "PEER_API_KEY" },
   "id": 1
@@ -22,6 +23,7 @@ Example response:
 
 ```json
 {
+  "jsonrpc": "2.0",
   "result": { "id": "xxxx-xxxx", "token": "TOKEN" },
   "id": 1
 }

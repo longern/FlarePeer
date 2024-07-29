@@ -152,20 +152,33 @@ async function onSocketOpen({ server, env }) {
     try {
       if (typeof event.data !== "string") throw new Error("Bad Request");
       const data = JSON.parse(event.data);
-      if (!(data.method in PEER_METHODS)) throw new Error("Bad Request");
+      if (!data.jsonrpc === "2.0" || !(data.method in PEER_METHODS))
+        throw new Error("Bad Request");
       const context = { env, server, data: localData };
       PEER_METHODS[data.method](data.params, context)
         .then((result) => {
           if (!data.id) return;
-          server.send(JSON.stringify({ result: result ?? null, id: data.id }));
+          server.send(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              result: result ?? null,
+              id: data.id,
+            })
+          );
         })
         .catch((e) => {
           server.send(
-            JSON.stringify({ error: { message: e.message }, id: data.id })
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { message: e.message },
+              id: data.id,
+            })
           );
         });
     } catch (e) {
-      server.send(JSON.stringify({ error: { message: e.message } }));
+      server.send(
+        JSON.stringify({ jsonrpc: "2.0", error: { message: e.message } })
+      );
     }
   });
 }
