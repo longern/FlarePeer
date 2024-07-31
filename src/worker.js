@@ -7,8 +7,13 @@ async function getFromCache(key, fetcher) {
   return value;
 }
 
+/**
+ * @param {string} secretKey
+ * @param {string} peerId
+ */
 async function generateToken(secretKey, peerId) {
-  const encodedKey = new TextEncoder().encode(secretKey);
+  const encoder = new TextEncoder();
+  const encodedKey = encoder.encode(secretKey);
   const key = await crypto.subtle.importKey(
     "raw",
     encodedKey,
@@ -16,7 +21,7 @@ async function generateToken(secretKey, peerId) {
     false,
     ["sign"]
   );
-  const encodedPeerId = new TextEncoder().encode(peerId);
+  const encodedPeerId = encoder.encode(peerId);
   const signature = await crypto.subtle.sign("HMAC", key, encodedPeerId);
   const signatureBase64 = btoa(
     String.fromCharCode(...new Uint8Array(signature))
@@ -24,8 +29,14 @@ async function generateToken(secretKey, peerId) {
   return signatureBase64;
 }
 
+/**
+ * @param {string} secretKey
+ * @param {string} peerId
+ * @param {string} token
+ */
 async function verifyToken(secretKey, peerId, token) {
-  const encodedKey = new TextEncoder().encode(secretKey);
+  const encoder = new TextEncoder();
+  const encodedKey = encoder.encode(secretKey);
   const key = await crypto.subtle.importKey(
     "raw",
     encodedKey,
@@ -33,7 +44,7 @@ async function verifyToken(secretKey, peerId, token) {
     false,
     ["verify"]
   );
-  const encodedPeerId = new TextEncoder().encode(peerId);
+  const encodedPeerId = encoder.encode(peerId);
   const encodedToken = new Uint8Array(
     atob(token)
       .split("")
@@ -63,11 +74,19 @@ async function createPeerId(db) {
   return peerId;
 }
 
+/**
+ * @type {Record<string, (params: any, context: {
+ *   env: Record<string, any>,
+ *   server: WebSocket,
+ *   data: Record<string, any>
+ * }) => Promise<any>}
+ */
 const PEER_METHODS = {
   async open(params, context) {
     const { env, server, data } = context;
     if (data.peerId) throw new Error("Precondition Failed");
-    if (env.PEER_API_KEY && params?.key !== env.PEER_API_KEY) server.close();
+    if (env.PEER_API_KEY && params?.key !== env.PEER_API_KEY)
+      server.close(1008);
     const newPeerId = await createPeerId(env.DB);
     data.peerId = newPeerId;
     const token = await generateToken(env.SECRET_KEY, newPeerId);
@@ -141,11 +160,14 @@ const PEER_METHODS = {
   },
 };
 
+/**
+ * @param {{ server: WebSocket, env: Record<string, any> }} context
+ */
 async function onSocketOpen({ server, env }) {
   const localData = { peerId: null, lastPoll: 0 };
 
   setTimeout(() => {
-    if (!localData.peerId) server.close();
+    if (!localData.peerId) server.close(1008);
   }, 10000);
 
   const response = (data) => server.send(JSON.stringify(data));
@@ -186,6 +208,10 @@ export default {
     const { 0: client, 1: server } = new WebSocketPair();
     server.accept();
     onSocketOpen({ server, env });
+
+    setTimeout(() => {
+      if (server.readyState === WebSocket.OPEN) server.close(1001);
+    }, 60 * 60 * 1000);
 
     return new Response(null, { status: 101, webSocket: client });
   },
