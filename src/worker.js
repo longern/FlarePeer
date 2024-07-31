@@ -148,6 +148,7 @@ async function onSocketOpen({ server, env }) {
     if (!localData.peerId) server.close();
   }, 10000);
 
+  const response = (data) => server.send(JSON.stringify(data));
   server.addEventListener("message", async (event) => {
     try {
       if (typeof event.data !== "string") throw new Error("Bad Request");
@@ -158,27 +159,14 @@ async function onSocketOpen({ server, env }) {
       PEER_METHODS[data.method](data.params, context)
         .then((result) => {
           if (!data.id) return;
-          server.send(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              result: result ?? null,
-              id: data.id,
-            })
-          );
+          response({ jsonrpc: "2.0", result: result ?? null, id: data.id });
         })
         .catch((e) => {
-          server.send(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { message: e.message },
-              id: data.id,
-            })
-          );
+          const error = { message: e.message };
+          response({ jsonrpc: "2.0", error, id: data.id });
         });
     } catch (e) {
-      server.send(
-        JSON.stringify({ jsonrpc: "2.0", error: { message: e.message } })
-      );
+      response({ jsonrpc: "2.0", error: { message: e.message } });
     }
   });
 }
@@ -199,9 +187,6 @@ export default {
     server.accept();
     onSocketOpen({ server, env });
 
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-    });
+    return new Response(null, { status: 101, webSocket: client });
   },
 };
