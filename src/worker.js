@@ -209,9 +209,11 @@ export default {
     server.accept();
     onSocketOpen({ server, env });
 
-    setTimeout(() => {
-      if (server.readyState === WebSocket.OPEN) server.close(1001);
-    }, 60 * 60 * 1000);
+    if (env.PEER_MAX_DURATION) {
+      setTimeout(() => {
+        if (server.readyState === WebSocket.OPEN) server.close(1001);
+      }, parseInt(env.PEER_MAX_DURATION, 10) * 1000);
+    }
 
     return new Response(null, { status: 101, webSocket: client });
   },

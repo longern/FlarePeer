@@ -73,3 +73,4 @@ Set the following environment variables and deploy.
 - `SECRET_KEY`: (Required) A random secret key.
 - `PEER_API_KEY`: If set, clients must provide this key to connect.
 - `PEER_POLL_INTERVAL`: The minimum interval (ms) between polling. Default is 4500.
+- `PEER_MAX_DURATION`: The maximum duration (s) of a connection. If not set, connections will not expire.
