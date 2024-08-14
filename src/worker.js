@@ -178,6 +178,7 @@ async function onSocketOpen({ server, env }) {
       if (!data.jsonrpc === "2.0" || !(data.method in PEER_METHODS))
         throw new Error("Bad Request");
       const context = { env, server, data: localData };
+      if (Array.isArray(data.params)) data.params = data.params[0];
       PEER_METHODS[data.method](data.params, context)
         .then((result) => {
           if (!data.id) return;
