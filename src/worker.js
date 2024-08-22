@@ -145,8 +145,7 @@ const PEER_METHODS = {
 
     if (!data.peerId) throw new Error("Precondition Failed");
 
-    const pollInterval = env.PEER_POLL_INTERVAL ?? 4500;
-    if (data.lastPoll + pollInterval > Date.now())
+    if (data.lastPoll + (env.PEER_POLL_INTERVAL ?? 0) > Date.now())
       throw new Error("Too Many Requests");
     data.lastPoll = Date.now();
 
